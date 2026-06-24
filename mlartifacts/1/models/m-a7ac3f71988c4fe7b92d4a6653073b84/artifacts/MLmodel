@@ -1,0 +1,35 @@
+artifact_path: mlflow-artifacts:/1/models/m-a7ac3f71988c4fe7b92d4a6653073b84/artifacts
+flavors:
+  python_function:
+    cloudpickle_version: 3.1.2
+    code: null
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.pyfunc.model
+    python_model: python_model.pkl
+    python_version: 3.11.3
+    streamable: false
+is_signature_from_type_hint: false
+mlflow_version: 3.14.0
+model_id: m-a7ac3f71988c4fe7b92d4a6653073b84
+model_size_bytes: 363101
+model_uuid: m-a7ac3f71988c4fe7b92d4a6653073b84
+prompts: null
+run_id: 5ab6a14b4a954231945d6b3937cfb790
+signature:
+  inputs: '[{"type": "double", "name": "amount", "required": true}, {"type": "double",
+    "name": "oldbalanceOrg", "required": true}, {"type": "double", "name": "newbalanceOrig",
+    "required": true}, {"type": "double", "name": "oldbalanceDest", "required": true},
+    {"type": "double", "name": "newbalanceDest", "required": true}, {"type": "long",
+    "name": "txn_count_24h", "required": true}, {"type": "double", "name": "amount_sum_24h",
+    "required": true}, {"type": "double", "name": "merchant_category_CASH_IN", "required":
+    true}, {"type": "double", "name": "merchant_category_CASH_OUT", "required": true},
+    {"type": "double", "name": "merchant_category_DEBIT", "required": true}, {"type":
+    "double", "name": "merchant_category_PAYMENT", "required": true}, {"type": "double",
+    "name": "merchant_category_TRANSFER", "required": true}]'
+  outputs: '[{"type": "tensor", "tensor-spec": {"dtype": "float32", "shape": [-1,
+    2]}}]'
+  params: null
+type_hint_from_example: false
+utc_time_created: '2026-06-24 15:07:24.546801'

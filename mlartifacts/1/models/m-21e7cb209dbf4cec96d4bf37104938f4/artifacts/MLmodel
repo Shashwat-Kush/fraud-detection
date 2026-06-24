@@ -1,0 +1,37 @@
+artifact_path: mlflow-artifacts:/1/models/m-21e7cb209dbf4cec96d4bf37104938f4/artifacts
+flavors:
+  python_function:
+    data: model.ubj
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.xgboost
+    python_version: 3.11.3
+  xgboost:
+    code: null
+    data: model.ubj
+    model_class: xgboost.sklearn.XGBClassifier
+    model_format: ubj
+    xgb_version: 3.2.0
+is_signature_from_type_hint: false
+mlflow_version: 3.14.0
+model_id: m-21e7cb209dbf4cec96d4bf37104938f4
+model_size_bytes: 253681
+model_uuid: m-21e7cb209dbf4cec96d4bf37104938f4
+prompts: null
+run_id: 0bdd64054de8409ab6ae8f8d588f4898
+signature:
+  inputs: '[{"type": "double", "name": "amount", "required": true}, {"type": "double",
+    "name": "txn_count_24h", "required": true}, {"type": "double", "name": "amount_sum_24h",
+    "required": true}, {"type": "double", "name": "merchant_category_Electronics",
+    "required": true}, {"type": "double", "name": "merchant_category_Fuel", "required":
+    true}, {"type": "double", "name": "merchant_category_Grocery", "required": true},
+    {"type": "double", "name": "merchant_category_Healthcare", "required": true},
+    {"type": "double", "name": "merchant_category_Restaurant", "required": true},
+    {"type": "double", "name": "merchant_category_Shopping", "required": true}, {"type":
+    "double", "name": "merchant_category_Travel", "required": true}]'
+  outputs: '[{"type": "tensor", "tensor-spec": {"dtype": "float32", "shape": [-1,
+    2]}}]'
+  params: null
+type_hint_from_example: false
+utc_time_created: '2026-06-22 18:42:16.867890'

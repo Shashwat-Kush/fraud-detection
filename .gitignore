@@ -1,0 +1,18 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Data & Models
+data/raw/*
+data/processed/*
+mlruns/
+
+# Keep directory structures
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# IDEs
+.vscode/
+.idea/
+.DS_Store

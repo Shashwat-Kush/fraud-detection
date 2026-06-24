@@ -1,0 +1,7 @@
+confluent-kafka
+pydantic
+pandas
+pyarrow
+mlflow
+xgboost
+evidently
