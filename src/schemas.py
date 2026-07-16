@@ -5,6 +5,7 @@ from datetime import datetime
 class Transaction(BaseModel):
     transaction_id: str
     account_id: str
+    receiver_id: str
     amount: float
     merchant_category: str
     timestamp: datetime
@@ -18,6 +19,7 @@ class Transaction(BaseModel):
 class APITransaction(BaseModel):
     transaction_id: str
     account_id: str
+    receiver_id: str
     amount: float
     merchant_category: str
     timestamp: datetime

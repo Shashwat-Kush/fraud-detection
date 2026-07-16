@@ -10,7 +10,6 @@ from sklearn.metrics import (
     confusion_matrix,
 )
 import mlflow
-import mlflow.xgboost
 from mlflow.tracking import MlflowClient
 from mlflow.exceptions import RestException
 from mlflow.models import infer_signature
@@ -19,10 +18,8 @@ import tempfile
 from typing import Any
 import mlflow.pyfunc
 
-
-mlflow.set_tracking_uri("http://localhost:5000")
-
-mlflow.set_experiment("Fraud Detection")
+import config
+from src.data_prep import chronological_split, load_features, prepare_datasets
 
 
 class FraudModel(mlflow.pyfunc.PythonModel):
@@ -41,13 +38,6 @@ class FraudModel(mlflow.pyfunc.PythonModel):
         return self.model.predict_proba(model_input)
 
 
-def load_features(path: Path) -> pd.DataFrame:
-    df = pd.read_parquet(path)
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
-    df = df.sort_values("timestamp").reset_index(drop=True)
-    return df
-
-
 def log_encoder_artifact(encoder: OneHotEncoder) -> None:
     with tempfile.TemporaryDirectory() as tmp_dir:
         encoder_path = Path(tmp_dir) / "encoder.pkl"
@@ -56,68 +46,6 @@ def log_encoder_artifact(encoder: OneHotEncoder) -> None:
             pickle.dump(encoder, f)
 
         mlflow.log_artifact(encoder_path)
-
-
-def chronological_split(
-    df: pd.DataFrame, train_frac: float = 0.8
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Split df chronologically by row position.
-
-    Assumes df is already sorted ascending by datetime index.
-    """
-    assert 0 < train_frac < 1
-    split_idx = int(len(df) * train_frac)
-    train_df = df.iloc[:split_idx]
-    test_df = df.iloc[split_idx:]
-
-    return train_df, test_df
-
-
-def prepare_datasets(
-    train_df: pd.DataFrame, test_df: pd.DataFrame
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, OneHotEncoder]:
-    encoder = OneHotEncoder(handle_unknown="ignore", sparse_output=False)
-    encoder.fit(train_df[["merchant_category"]])
-    train_cat = encoder.transform(train_df[["merchant_category"]])
-    x_train_cat = pd.DataFrame(
-        train_cat, columns=encoder.get_feature_names_out(), index=train_df.index
-    )
-    x_train = pd.concat([train_df, x_train_cat], axis=1)
-    test_cat = encoder.transform(test_df[["merchant_category"]])
-    x_test_cat = pd.DataFrame(
-        test_cat, columns=encoder.get_feature_names_out(), index=test_df.index
-    )
-    x_test = pd.concat([test_df, x_test_cat], axis=1)
-
-    drop_cols = [
-        "step",
-        "isFlaggedFraud",
-        "is_fraud",
-        "isFraud",
-        "transaction_id",
-        "account_id",
-        "merchant_category",
-        "type",
-        "nameOrig",
-        "nameDest",
-        "timestamp",
-    ]
-
-    x_train = x_train.drop(
-        columns=drop_cols,
-        errors="ignore",
-    )
-
-    x_test = x_test.drop(
-        columns=drop_cols,
-        errors="ignore",
-    )
-
-    y_train = train_df["is_fraud"]
-    y_test = test_df["is_fraud"]
-
-    return x_train, y_train, x_test, y_test, encoder
 
 
 def build_reference_dataset(
@@ -136,6 +64,9 @@ def build_reference_dataset(
 
 
 if __name__ == "__main__":
+    mlflow.set_tracking_uri(config.MLFLOW_TRACKING_URI)
+    mlflow.set_experiment(config.EXPERIMENT_NAME)
+
     project_root = Path(__file__).resolve().parent.parent
 
     data_path = project_root / "data" / "processed" / "historical_features.parquet"
@@ -290,7 +221,6 @@ if __name__ == "__main__":
 
     weighted_signature = infer_signature(x_train, weighted_model.predict_proba(x_train))
 
-    mlflow.set_experiment("Fraud Detection")
     # --------------------------------------------------
     # RUN 1: BASELINE
     # --------------------------------------------------
@@ -415,7 +345,7 @@ if __name__ == "__main__":
 
     registered_model = mlflow.register_model(
         model_uri=f"runs:/{threshold_run_id}/model",
-        name="fraud-detector",
+        name=config.TABULAR_MODEL_NAME,
     )
 
     candidate_version = registered_model.version
@@ -428,7 +358,7 @@ if __name__ == "__main__":
 
     try:
         champion = client.get_model_version_by_alias(
-            name="fraud-detector",
+            name=config.TABULAR_MODEL_NAME,
             alias="champion",
         )
 
@@ -461,7 +391,7 @@ if __name__ == "__main__":
 
         if should_promote:
             client.set_registered_model_alias(
-                name="fraud-detector",
+                name=config.TABULAR_MODEL_NAME,
                 alias="champion",
                 version=candidate_version,
             )
@@ -475,7 +405,7 @@ if __name__ == "__main__":
         # No champion exists yet
 
         client.set_registered_model_alias(
-            name="fraud-detector",
+            name=config.TABULAR_MODEL_NAME,
             alias="champion",
             version=candidate_version,
         )
