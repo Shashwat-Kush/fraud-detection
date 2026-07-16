@@ -12,9 +12,8 @@ End-to-end real-time fraud detection pipeline with 3 layers:
 
 ### Infrastructure
 ```bash
-docker-compose up -d              # Start Kafka + Zookeeper
-mlflow ui                         # MLflow UI at http://localhost:5000
-uvicorn serve:app --reload --port 8000  # Start FastAPI inference server
+make up                           # Start Kafka (KRaft) + MLflow via docker compose
+make serve                        # Start FastAPI inference server on :8000
 ```
 
 ### Offline Pipeline (Training)
@@ -28,12 +27,18 @@ python -m src.features
 # 3. Train baseline XGBoost + register to MLflow (champion/challenger)
 python -m src.model
 
-# 4. Train GraphSAGE embeddings (PyG) -> save embeddings + account map
+# 4. Graph pipeline: GraphSAGE -> embeddings -> graph-augmented XGBoost
 python -m src.train_graph
-
-# 5. Prepare graph-augmented features + train GraphSAGE+XGBoost
+python -m src.extract_embeddings
 python -m src.prepare_graph_data
 python -m src.train_graph_xgb
+# (or `make train` / `make graph`)
+```
+
+### Tests & Lint
+```bash
+make test    # pytest tests/
+make lint    # ruff check src serve.py config.py tests
 ```
 
 ### Online Pipeline (Streaming)
@@ -53,10 +58,10 @@ python -m src.monitor
 ```
 
 ## Key Configuration
-- **config.py**: `MLFLOW_TRACKING_URI`, `MODEL_NAME`, `MODEL_ALIAS`, `FRAUD_THRESHOLD` (default 0.95)
-- **docker-compose.yml**: Kafka on `localhost:9092`, Zookeeper on `localhost:2181`
-- **MLflow**: Models registered as `fraud-detector` (tabular XGB) and `fraud-detector-graph` (GraphSAGE+XGB)
-- **Champion alias**: `champion` (promoted automatically if AUC-PR improves by >0.01 AND recall maintained)
+- **config.py**: single source of truth — `MLFLOW_TRACKING_URI`, `KAFKA_BOOTSTRAP_SERVERS`, `KAFKA_TOPIC`, `SCORE_URL`, `MODEL_NAME`, `MODEL_ALIAS`, `EMBEDDING_DIM`, `TRAIN_FRAC`, `FRAUD_THRESHOLD` (env-var overridable where it matters)
+- **docker-compose.yml**: Kafka (KRaft, no Zookeeper) on `localhost:9092`, MLflow server on `localhost:5000` (sqlite backend `mlflow.db`)
+- **MLflow**: Models registered as `fraud-detector` (tabular XGB) and `fraud-detector-graph` (GraphSAGE+XGB). The API serves `fraud-detector-graph` by default (`config.MODEL_NAME`)
+- **Champion alias**: `champion` (promoted automatically if AUC-PR improves by >0.01 AND recall maintained — both pipelines)
 
 ## Key Files & Architecture
 
@@ -64,11 +69,14 @@ python -m src.monitor
 |------|---------|
 | `src/ingest_paysim.py` | Raw CSV → chronological 80/20 split to parquet |
 | `src/features.py` | 24h rolling window features (left-closed, per account_id) |
+| `src/data_prep.py` | Shared split/encoding logic used by both training pipelines |
 | `src/model.py` | Baseline XGBoost + MLflow logging + Champion/Challenger promotion |
-| `src/train_graph.py` | GraphSAGE training (PyG NeighborLoader) → saves embeddings |
+| `src/graph_builder.py` | Account graph + node features + weak labels (train window only) |
+| `src/train_graph.py` | GraphSAGE training (PyG NeighborLoader) → checkpoint |
+| `src/extract_embeddings.py` | Full-graph inference → `graph_embeddings.npy` + account map |
 | `src/prepare_graph_data.py` | Joins graph embeddings to tabular features |
-| `src/train_graph_xgb.py` | GraphSAGE embeddings + XGBoost → registers `fraud-detector-graph` |
-| `src/serve.py` | FastAPI `/score` endpoint, loads champion model + encoder + embeddings from MLflow artifacts |
+| `src/train_graph_xgb.py` | GraphSAGE embeddings + XGBoost → registers + promotes `fraud-detector-graph` |
+| `serve.py` | FastAPI `/score` endpoint, loads champion model + encoder + embeddings from MLflow artifacts |
 | `src/producer.py` | Streams `streaming.parquet` to Kafka (partition key = account_id) |
 | `src/consumer.py` | Consumes Kafka, maintains in-memory 24h rolling state, calls `/score` |
 | `src/monitor.py` | Evidently AI drift report (JS divergence for categorical, KS for numerical) |
@@ -80,16 +88,16 @@ python -m src.monitor
 2. **Kafka partition key = `account_id`** - Guarantees per-account event ordering for correct rolling window state
 3. **Left-closed rolling window** (`closed="left"`) - Excludes current transaction from features
 4. **Schema contract** - Pydantic models match MLflow model signature; drift monitor validates column parity
-5. **Champion/Challenger logic** (model.py:457-460): Promote if `candidate_auc_pr > champion_auc_pr + 0.01` AND `candidate_recall >= champion_recall`
+5. **Champion/Challenger logic** (model.py, train_graph_xgb.py): Promote if `candidate_auc_pr > champion_auc_pr + 0.01` AND `candidate_recall >= champion_recall`
 6. **Threshold tuning** - Default threshold 0.95 (configurable in `config.FRAUD_THRESHOLD`) chosen via sweep for precision on imbalanced data
 7. **Graph embeddings** - 64-dim GraphSAGE embeddings for sender/receiver accounts, loaded at API startup from MLflow artifacts
+8. **Leakage-safe graph** - graph + weak node labels built from the training window only (`load_graph_window`), never from the test period
 8. **Production logging** - Async background task writes scored transactions to `data/processed/production_logs.jsonl`
 
 ## Common Issues / Gotchas
 - **PaySim CSV required** at `data/raw/transactions.csv` (download from Kaggle)
-- **MLflow must be running** before training (`mlflow ui` in background)
-- **Kafka must be up** before producer/consumer (`docker-compose up -d`)
-- **FastAPI must be running** before consumer (`uvicorn serve:app --reload --port 8000`)
+- **MLflow + Kafka must be up** before training/streaming (`make up`)
+- **FastAPI must be running** before consumer (`make serve`)
 - **Graph embeddings** saved as `.npy` + pickle maps; loaded at API startup via MLflow artifact download
 - **Drift monitor fails** if `production_logs.jsonl` empty or missing columns vs reference set
 - **MPS device** used for GraphSAGE if available (Mac M-series); falls back to CPU
@@ -97,7 +105,7 @@ python -m src.monitor
 ## Verification Checklist
 After full pipeline run:
 - MLflow UI shows `fraud-detector-graph` model with `champion` alias
-- `docker-compose ps` shows kafka/zookeeper healthy
+- `docker compose ps` shows kafka/mlflow healthy
 - `curl http://localhost:8000/docs` shows API schema
 - `python -m src.consumer` logs predictions with `is_fraud` and `fraud_probability`
 - `data/processed/drift_report.html` opens with drift metrics

@@ -1,35 +1,21 @@
-services: #It creates a container under it.
-  zookeeper: #container 1
-    image: confluentinc/cp-zookeeper:7.6.1 # docker download the zookeeper image from hub
-    container_name: fraud-zookeeper #without this, docker will give random shitty names
-    environment: #these are the settings passed into zookeeper
-      ZOOKEEPER_CLIENT_PORT: 2181   #zookeeper listens to this port and kafka connects to this port
-      ZOOKEEPER_TICK_TIME: 2000 #internal heartbeat internal in ms
-    ports: #Host_port:container_port
-      - "2181:2181"
-  kafka: #container 2
-    image: confluentinc/cp-kafka:7.6.1 #download kafka from the hub
+services:
+  # Single-node Kafka in KRaft mode (no Zookeeper needed).
+  # The default image config advertises PLAINTEXT://localhost:9092,
+  # which is exactly what the host-run producer/consumer use.
+  kafka:
+    image: apache/kafka:3.9.1
     container_name: fraud-kafka
-    depends_on: #meaning that first start zookeeper then kafka
-      - zookeeper
-    ports:  #kafka has 2 listeners, ABOVE is laptop and other is containers talking to kafka
+    ports:
       - "9092:9092"
-      - "29092:29092"
-    environment:
-      KAFKA_BROKER_ID: 1   # KAFKA SERVER NEEDS A BROKER
 
-      KAFKA_ZOOKEEPER_CONNECT:  zookeeper:2181    #it tells kafka that zookeeper is available at this address
-
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP:     # CREATES 2 LISTENERS AND THEY BOTH USE PLAINTEXT, NO SSL OR AUTHGOOD FOR LOCAL DEV
-        PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092  # THIS EXPLAIN WHERE SHOULD KAFKA LISTEN TO, 0.0.0.0 MEANS ACCEPT CONNECTIONS FROM ANYWHERE INSIDE THE CONTAINER, :29092 IS FOR DOCKER CONTAINERS AND :9092 IS FOR YOUR LAPTOP
-
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092 # IT TELLS WHAT ADDRESS SHOULD THE CLIENTS USE, THE LOCAL LAPTOP SHOULD USE 9092 AND CONTAINER SHOULD USE 29092
-
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT   # INCASE WE AVE MULTIPLE BROKERS, THEY COMMUNICATE USING PLAINTEXT.
-
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-
-
-      
+  # MLflow tracking server + model registry.
+  # Mounts the project root so mlflow.db and mlartifacts/ live alongside the code.
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.14.0
+    container_name: fraud-mlflow
+    working_dir: /app
+    volumes:
+      - .:/app
+    ports:
+      - "5000:5000"
+    command: mlflow server --backend-store-uri sqlite:///mlflow.db --host 0.0.0.0 --port 5000
