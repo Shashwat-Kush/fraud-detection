@@ -10,10 +10,15 @@ EXPERIMENT_NAME = "Fraud Detection"
 TABULAR_MODEL_NAME = "fraud-detector"
 GRAPH_MODEL_NAME = "fraud-detector-graph"
 
-# Model served by the API. The graph model logs the encoder/embedding
-# artifacts that serve.py downloads at startup, so it is the default.
-MODEL_NAME = os.getenv("MODEL_NAME", GRAPH_MODEL_NAME)
+# Model served by the API. The tabular champion outperforms the graph
+# model once leakage is removed, so it is the default; set MODEL_NAME to
+# fraud-detector-graph to serve the graph variant.
+MODEL_NAME = os.getenv("MODEL_NAME", TABULAR_MODEL_NAME)
 MODEL_ALIAS = "champion"
+
+# Sender accounts rarely recur in PaySim, so their embeddings mostly
+# carry noise; set to 0 to train the graph model on receiver embeddings only.
+INCLUDE_SENDER_EMBEDDINGS = os.getenv("INCLUDE_SENDER_EMBEDDINGS", "1") == "1"
 
 # GraphSAGE embedding dimensionality (hidden_channels).
 EMBEDDING_DIM = 64

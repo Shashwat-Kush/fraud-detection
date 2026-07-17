@@ -14,10 +14,20 @@ Evaluated on a strictly chronological hold-out set (final 20% of the historical 
 |---|---|---|---|---|---|
 | XGBoost baseline | 0.50 | 0.633 | 0.566 | 0.598 | 0.450 |
 | XGBoost + `scale_pos_weight` | 0.50 | 0.285 | 0.991 | 0.443 | 0.905 |
-| XGBoost weighted, tuned threshold | 0.95 | 0.445 | 0.944 | 0.605 | 0.905 |
-| **GraphSAGE embeddings + XGBoost** | 0.95 | **0.690** | 0.832 | **0.754** | 0.878 |
+| **XGBoost weighted, tuned threshold** (served champion) | 0.95 | 0.445 | 0.944 | **0.605** | **0.905** |
+| GraphSAGE embeddings + XGBoost | 0.95 | 0.602 | 0.464 | 0.524 | 0.574 |
 
-Adding 64-dim GraphSAGE sender/receiver embeddings to the tabular features raised precision from **0.445 → 0.690** at the same operating threshold — cutting false positives by more than half while keeping recall above 0.83. In fraud operations, precision at fixed alert volume is what controls analyst workload, so this is the trade the system optimizes for.
+The **class-weighted XGBoost is the production champion**: it catches **94% of fraud** at an AUC-PR of **0.905**. AUC-PR is the metric that matters on a <0.2% positive rate — it summarizes the full precision/recall trade-off without being flattered by the 99.8% of easy negatives that inflate accuracy and ROC-AUC.
+
+### A negative result: why the graph model didn't win
+
+An earlier version of this project reported the graph model *beating* the tabular one (AUC-PR 0.878, precision 0.690). That result was **temporal leakage** — the account graph and its weak fraud labels were built from the *entire* history, so the GraphSAGE embeddings had effectively seen which accounts commit fraud in the test period. After rebuilding the graph from the **training window only** (`load_graph_window`), the graph model's AUC-PR fell from 0.878 to **0.574** — well below the plain tabular model. Three reasons it can't recover:
+
+* **PaySim has no exploitable network structure.** Origin accounts almost never recur and destination accounts repeat only weakly, so the training-window graph shares few nodes with the test window. Most test transactions look up an account the graph never saw and receive an all-zero embedding.
+* **The embeddings become cold-start noise, and it costs more than it helps.** XGBoost leans on the 128 embedding columns during training (where they carry weak-label signal), then meets mostly zeros at inference — a large train/test distribution shift that drags the graph model *below* the tabular baseline. Adding explicit `sender_in_graph`/`receiver_in_graph` indicators so the model could distinguish "unseen account" from "embedding near zero" left the metrics unchanged.
+* **Graph learning pays off on datasets with real entity reuse** — shared devices/cards (IEEE-CIS) or transaction chains (the Elliptic Bitcoin graph) — which synthetic PaySim simply doesn't have.
+
+The graph pipeline is kept end-to-end and registered as `fraud-detector-graph`, but the **API serves the tabular champion by default**. Shipping the simpler model on honest, leakage-free numbers is the point: the more interesting engineering result here is catching the leakage, not manufacturing a win.
 
 ## 🏗 System Architecture
 

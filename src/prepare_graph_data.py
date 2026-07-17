@@ -25,7 +25,7 @@ TEST_FEATURES_PATH = OUTPUT_DIR / "test_features.parquet"
 TRAIN_LABELS_PATH = OUTPUT_DIR / "y_train.npy"
 TEST_LABELS_PATH = OUTPUT_DIR / "y_test.npy"
 
-ENCODER_PATH = OUTPUT_DIR / "graph_encoder.pkl"
+ENCODER_PATH = OUTPUT_DIR / "encoder.pkl"
 
 FEATURE_COLUMNS_PATH = OUTPUT_DIR / "feature_columns.json"
 
@@ -90,31 +90,47 @@ def append_graph_embeddings(
     """
     Append sender and receiver GraphSAGE embeddings
     to an already-prepared tabular feature matrix.
+
+    Accounts absent from the training graph get zero embeddings, so
+    explicit in-graph indicators are added — otherwise the model cannot
+    distinguish "unseen account" from "embedding near zero", which
+    creates train/test skew (most test-period senders are unseen).
     """
 
-    sender_df = create_embedding_frame(
-        original_df["nameOrig"],
-        embeddings,
-        account_to_id,
-        SENDER_EMB_COLS,
+    sender_in_graph = original_df["nameOrig"].isin(account_to_id)
+    receiver_in_graph = original_df["nameDest"].isin(account_to_id)
+
+    parts = [
+        X,
+        pd.DataFrame(
+            {
+                "sender_in_graph": sender_in_graph.astype("float32"),
+                "receiver_in_graph": receiver_in_graph.astype("float32"),
+            },
+            index=X.index,
+        ),
+    ]
+
+    if config.INCLUDE_SENDER_EMBEDDINGS:
+        parts.append(
+            create_embedding_frame(
+                original_df["nameOrig"],
+                embeddings,
+                account_to_id,
+                SENDER_EMB_COLS,
+            )
+        )
+
+    parts.append(
+        create_embedding_frame(
+            original_df["nameDest"],
+            embeddings,
+            account_to_id,
+            RECEIVER_EMB_COLS,
+        )
     )
 
-    receiver_df = create_embedding_frame(
-        original_df["nameDest"],
-        embeddings,
-        account_to_id,
-        RECEIVER_EMB_COLS,
-    )
-
-    return pd.concat(
-        [
-            X,
-            sender_df,
-            receiver_df,
-        ],
-        axis=1,
-        copy=False,
-    )
+    return pd.concat(parts, axis=1, copy=False)
 
 
 def main() -> None:

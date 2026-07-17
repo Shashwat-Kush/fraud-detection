@@ -36,9 +36,7 @@ TEST_FEATURES = DATA_DIR / "test_features.parquet"
 
 TRAIN_LABELS = DATA_DIR / "y_train.npy"
 TEST_LABELS = DATA_DIR / "y_test.npy"
-ENCODER_PATH = DATA_DIR / "graph_encoder.pkl"
-ACCOUNT_MAP_PATH = DATA_DIR / "account_to_id.pkl"
-EMBEDDING_PATH = DATA_DIR / "graph_embeddings.npy"
+ENCODER_PATH = DATA_DIR / "encoder.pkl"
 
 
 class FraudModel(mlflow.pyfunc.PythonModel):
@@ -341,9 +339,9 @@ if __name__ == "__main__":
         )
 
         wrapped_model = FraudModel(booster)
+        # Only the encoder is small enough for the artifact store; serve.py
+        # reads the account map and embeddings from the processed-data dir.
         mlflow.log_artifact(ENCODER_PATH)
-        mlflow.log_artifact(ACCOUNT_MAP_PATH)
-        mlflow.log_artifact(EMBEDDING_PATH)
         model_info = mlflow.pyfunc.log_model(
             name="model",
             python_model=wrapped_model,

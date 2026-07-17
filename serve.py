@@ -14,6 +14,7 @@ from sklearn.preprocessing import OneHotEncoder
 
 from src.schemas import APITransaction
 
+PROCESSED_DIR = Path(__file__).resolve().parent / "data" / "processed"
 
 SENDER_EMB_COLS = [f"sender_emb_{i}" for i in range(config.EMBEDDING_DIM)]
 RECEIVER_EMB_COLS = [f"receiver_emb_{i}" for i in range(config.EMBEDDING_DIM)]
@@ -31,6 +32,11 @@ def predict(model: PyFuncModel, df: pd.DataFrame) -> np.ndarray:
     if not isinstance(preds, np.ndarray):
         preds = np.asarray(preds)
 
+    # The tabular pyfunc wraps predict_proba and returns (n, 2);
+    # the graph booster returns (n,). Normalize to P(fraud).
+    if preds.ndim == 2 and preds.shape[1] == 2:
+        preds = preds[:, 1]
+
     if preds.ndim != 1:
         raise ValueError(f"Expected 1D probability array, got shape {preds.shape}")
 
@@ -43,7 +49,7 @@ def load_encoder(run_id: str) -> OneHotEncoder:
     client = MlflowClient()
     encoder_path = client.download_artifacts(
         run_id=run_id,
-        path="graph_encoder.pkl",
+        path="encoder.pkl",
     )
 
     with open(encoder_path, "rb") as f:
@@ -59,30 +65,11 @@ def build_features(
     transaction: dict,
     encoder: OneHotEncoder,
     feature_cols: list[str],
-    account_to_id: dict[str, int],
-    graph_embeddings: np.ndarray,
+    account_to_id: dict[str, int] | None = None,
+    graph_embeddings: np.ndarray | None = None,
 ) -> pd.DataFrame:
 
     df = pd.DataFrame([transaction])
-    sender_idx = account_to_id.get(df.loc[0, "account_id"])
-    receiver_idx = account_to_id.get(df.loc[0, "receiver_id"])
-
-    if sender_idx is None:
-        sender_embedding = np.zeros(config.EMBEDDING_DIM, dtype=np.float32)
-    else:
-        sender_embedding = graph_embeddings[sender_idx]
-
-    if receiver_idx is None:
-        receiver_embedding = np.zeros(config.EMBEDDING_DIM, dtype=np.float32)
-    else:
-        receiver_embedding = graph_embeddings[receiver_idx]
-
-    sender_df = pd.DataFrame([sender_embedding], columns=SENDER_EMB_COLS)
-
-    receiver_df = pd.DataFrame([receiver_embedding], columns=RECEIVER_EMB_COLS)
-
-    sender_df.index = df.index
-    receiver_df.index = df.index
 
     encoded = encoder.transform(df[["merchant_category"]])
 
@@ -92,15 +79,42 @@ def build_features(
         index=df.index,
     )
 
-    df = pd.concat([df, encoded_df], axis=1)
-    df = pd.concat(
-        [
-            df,
-            sender_df,
-            receiver_df,
-        ],
-        axis=1,
-    )
+    parts = [df, encoded_df]
+
+    if account_to_id is not None and graph_embeddings is not None:
+        sender_idx = account_to_id.get(df.loc[0, "account_id"])
+        receiver_idx = account_to_id.get(df.loc[0, "receiver_id"])
+
+        parts.append(
+            pd.DataFrame(
+                {
+                    "sender_in_graph": [float(sender_idx is not None)],
+                    "receiver_in_graph": [float(receiver_idx is not None)],
+                },
+                index=df.index,
+            )
+        )
+
+        if sender_idx is None:
+            sender_embedding = np.zeros(config.EMBEDDING_DIM, dtype=np.float32)
+        else:
+            sender_embedding = graph_embeddings[sender_idx]
+
+        if receiver_idx is None:
+            receiver_embedding = np.zeros(config.EMBEDDING_DIM, dtype=np.float32)
+        else:
+            receiver_embedding = graph_embeddings[receiver_idx]
+
+        parts.append(
+            pd.DataFrame([sender_embedding], columns=SENDER_EMB_COLS, index=df.index)
+        )
+        parts.append(
+            pd.DataFrame(
+                [receiver_embedding], columns=RECEIVER_EMB_COLS, index=df.index
+            )
+        )
+
+    df = pd.concat(parts, axis=1)
     df = df.drop(
         columns=[
             "receiver_id",
@@ -139,24 +153,25 @@ async def lifespan(app: FastAPI):
 
     app.state.encoder = load_encoder(run_id)
 
-    client = MlflowClient()
-
-    account_map_path = client.download_artifacts(
-        run_id=run_id,
-        path="account_to_id.pkl",
-    )
-
-    graph_embeddings_path = client.download_artifacts(
-        run_id=run_id,
-        path="graph_embeddings.npy",
-    )
-
-    with open(account_map_path, "rb") as f:
-        app.state.account_to_id = pickle.load(f)
-
-    app.state.graph_embeddings = np.load(graph_embeddings_path)
-
     app.state.feature_cols = app.state.model.metadata.signature.inputs.input_names()
+
+    # Graph mode is signature-driven: only load embeddings if the champion
+    # was trained with them. The embedding matrix (~1.5 GB for PaySim) is
+    # far too large for the MLflow artifact proxy, so it is read from the
+    # processed-data directory; in production it would live in object
+    # storage or a feature store.
+    graph_mode = any(
+        c.startswith(("sender_emb_", "receiver_emb_")) for c in app.state.feature_cols
+    )
+
+    if graph_mode:
+        app.state.graph_embeddings = np.load(PROCESSED_DIR / "graph_embeddings.npy")
+
+        with open(PROCESSED_DIR / "account_to_id.pkl", "rb") as f:
+            app.state.account_to_id = pickle.load(f)
+    else:
+        app.state.graph_embeddings = None
+        app.state.account_to_id = None
 
     yield
 
@@ -191,9 +206,7 @@ async def score_transaction(
     log_record["fraud_probability"] = fraud_probability
     log_record["is_fraud"] = is_fraud
 
-    project_root = Path(__file__).resolve().parent
-
-    log_path = project_root / "data" / "processed" / "production_logs.jsonl"
+    log_path = PROCESSED_DIR / "production_logs.jsonl"
 
     log_path.parent.mkdir(
         parents=True,
